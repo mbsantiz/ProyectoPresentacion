@@ -54,6 +54,8 @@ def obtener_datos_fijos(sheets, nombre_proyecto):
 
     for row in result.get('values', []):
         if row[0] == nombre_proyecto:
+            if len(row) < 8:
+                raise Exception(f"Fila incompleta para el proyecto '{nombre_proyecto}'. Se requieren al menos 8 columnas.")
             return {
                 "TITULO1": row[1],
                 "TITULO2": row[2],
@@ -61,8 +63,9 @@ def obtener_datos_fijos(sheets, nombre_proyecto):
                 "PM": row[4],
                 "FECHAI": row[5],
                 "FECHAF": row[6],
-                "DESCRIPTION": row[7] if len(row) > 7 else ""
+                "DESCRIPTION": row[7]
             }
+
     return {}
 
 # === AGREGAR NUEVO PROYECTO Y ACTUALIZACIÓN ===

@@ -23,7 +23,7 @@ def autenticar():
     creds_info = json.loads(creds_json_str)
     creds = service_account.Credentials.from_service_account_info(
         creds_info,
-        scopes=['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets.readonly']
+        scopes=['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets']
     )
     drive = build('drive', 'v3', credentials=creds)
     sheets = build('sheets', 'v4', credentials=creds)
@@ -37,7 +37,6 @@ def obtener_o_crear_carpeta(drive, nombre_proyecto):
     if items:
         return items[0]['id']
 
-    # Si no existe, crear carpeta
     carpeta_metadata = {
         'name': nombre_proyecto,
         'mimeType': 'application/vnd.google-apps.folder',
@@ -65,6 +64,43 @@ def obtener_datos_fijos(sheets, nombre_proyecto):
             }
     return {}
 
+# === AGREGAR NUEVO PROYECTO Y ACTUALIZACIÓN ===
+def agregar_proyecto_y_actualizacion(sheets, nombre_proyecto, datos_variables):
+    fila_proyecto = [
+        nombre_proyecto,
+        datos_variables.get("TITULO1", ""),
+        datos_variables.get("TITULO2", ""),
+        datos_variables.get("BUOWNER", ""),
+        datos_variables.get("PM", ""),
+        datos_variables.get("FECHAI", ""),
+        datos_variables.get("FECHAF", ""),
+        # más columnas si hay
+    ]
+
+    sheets.spreadsheets().values().append(
+        spreadsheetId=SPREADSHEET_ID,
+        range='Proyectos',
+        valueInputOption='RAW',
+        insertDataOption='INSERT_ROWS',
+        body={'values': [fila_proyecto]}
+    ).execute()
+
+    fila_actualizacion = [
+        nombre_proyecto,
+        datos_variables.get("AVANCE1", ""),
+        datos_variables.get("AVANCE2", ""),
+        datos_variables.get("AVANCE3", ""),
+        # más campos variables para actualizaciones
+    ]
+
+    sheets.spreadsheets().values().append(
+        spreadsheetId=SPREADSHEET_ID,
+        range='Actualizaciones',
+        valueInputOption='RAW',
+        insertDataOption='INSERT_ROWS',
+        body={'values': [fila_actualizacion]}
+    ).execute()
+
 # === SUBIR IMAGEN DIRECTAMENTE DESDE AGENTE ===
 @app.route('/subir-imagen', methods=['POST'])
 def subir_imagen_directa():
@@ -78,13 +114,11 @@ def subir_imagen_directa():
     drive, _ = autenticar()
     carpeta_id = obtener_o_crear_carpeta(drive, nombre_proyecto)
 
-    # Eliminar archivos existentes con mismo nombre
     query = f"'{carpeta_id}' in parents and name = '{nombre_archivo}'"
     archivos = drive.files().list(q=query, fields="files(id)").execute().get('files', [])
     for archivo_existente in archivos:
         drive.files().delete(fileId=archivo_existente['id']).execute()
 
-    # Guardar archivo temporalmente y subir
     if not os.path.exists('temp'):
         os.makedirs('temp')
     temp_path = os.path.join("temp", secure_filename(nombre_archivo))
@@ -126,12 +160,13 @@ def actualizar_presentacion():
 
     datos_fijos = obtener_datos_fijos(sheets, nombre_proyecto)
     if not datos_fijos:
-        return jsonify({"error": "No se encontraron los datos fijos en Sheets"}), 404
+        agregar_proyecto_y_actualizacion(sheets, nombre_proyecto, datos_variables)
+        datos_fijos = obtener_datos_fijos(sheets, nombre_proyecto)  # leer después de insertar
 
     datos_finales = {**datos_fijos, **datos_variables}
     url = llamar_web_app(nombre_proyecto, datos_finales)
 
-    return jsonify({"mensaje": "✅ Presentación actualizada", "url": url})
+    return jsonify({"mensaje": "✅ Presentación creada o actualizada", "url": url})
 
 # === RUN SERVER ===
 if __name__ == '__main__':

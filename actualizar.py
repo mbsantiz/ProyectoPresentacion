@@ -10,18 +10,24 @@ import json
 # === CONFIGURACIÓN ===
 CARPETA_PADRE_ID = '1IqWQkzIEksw6F7bxqRA_od-1f0BHaKXJ'
 SPREADSHEET_ID = '1dKEnfq7RxCt8Slk73oGhKrBmYyVayt8vP3gHJJ24wjQ'
-CREDENTIALS_FILE = 'astute-dreamer-463903-s9-bcbff0079541.json'
 WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzGf9eb4pchk9c9k-5i-DBMxNXw8-Vo-iJq3QGJpKWwUs_fDiUwCF4NAY2EUXGjeYM_/exec'
 
 app = Flask(__name__)
 
-# === AUTENTICACIÓN ===
+# === AUTENTICACIÓN USANDO VARIABLE DE ENTORNO JSON ===
 def autenticar():
-    creds = service_account.Credentials.from_service_account_file(
-        CREDENTIALS_FILE,
+    creds_json_str = os.getenv('GOOGLE_CREDS_JSON')
+    if not creds_json_str:
+        raise Exception("No se encontró la variable de entorno GOOGLE_CREDS_JSON")
+
+    creds_info = json.loads(creds_json_str)
+    creds = service_account.Credentials.from_service_account_info(
+        creds_info,
         scopes=['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets.readonly']
     )
-    return build('drive', 'v3', credentials=creds), build('sheets', 'v4', credentials=creds)
+    drive = build('drive', 'v3', credentials=creds)
+    sheets = build('sheets', 'v4', credentials=creds)
+    return drive, sheets
 
 # === BUSCAR DATOS FIJOS EN SHEETS ===
 def obtener_datos_fijos(sheets, nombre_proyecto):

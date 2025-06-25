@@ -71,15 +71,17 @@ def obtener_datos_fijos(sheets, nombre_proyecto):
 # === AGREGAR NUEVO PROYECTO Y ACTUALIZACIÓN ===
 def agregar_proyecto_y_actualizacion(sheets, nombre_proyecto, datos_fijos, datos_variables):
     fila_proyecto = [
-        nombre_proyecto,
-        datos_fijos.get("TITULO1", ""),
-        datos_fijos.get("TITULO2", ""),
-        datos_fijos.get("BUOWNER", ""),
-        datos_fijos.get("PM", ""),
-        datos_fijos.get("FECHAI", ""),
-        datos_fijos.get("FECHAF", ""),
-        datos_fijos.get("DESCRIPTION", "")
-    ]
+    nombre_proyecto,
+    datos_variables.get("TITULO1", ""),
+    datos_variables.get("TITULO2", ""),
+    datos_variables.get("BUOWNER", ""),
+    datos_variables.get("PM", ""),
+    datos_variables.get("FECHAI", ""),
+    datos_variables.get("FECHAF", ""),
+    datos_variables.get("DESCRIPTION", ""),
+    "",  # CarpetaID (vacío por ahora)
+    ""   # PresentacionBaseID (vacío por ahora)
+]
     sheets.spreadsheets().values().append(
         spreadsheetId=SPREADSHEET_ID,
         range='Proyectos',

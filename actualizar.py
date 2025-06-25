@@ -27,7 +27,7 @@ def autenticar():
 def obtener_datos_fijos(sheets, nombre_proyecto):
     result = sheets.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID,
-        range='Proyectos!A2:L'
+        range='Proyectos'
     ).execute()
 
     for row in result.get('values', []):

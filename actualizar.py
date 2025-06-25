@@ -159,7 +159,7 @@ def llamar_web_app(nombre_proyecto, datos_finales):
     }
     headers = {'Content-Type': 'application/json'}
     try:
-        response = requests.post(WEB_APP_URL, data=json.dumps(payload), headers=headers, timeout=15)
+        response = requests.post(WEB_APP_URL, data=json.dumps(payload), headers=headers, timeout=40)
         response.raise_for_status()
         return response.json().get('url')
     except requests.exceptions.Timeout:

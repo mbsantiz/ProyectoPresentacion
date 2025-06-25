@@ -29,6 +29,23 @@ def autenticar():
     sheets = build('sheets', 'v4', credentials=creds)
     return drive, sheets
 
+# === OBTENER O CREAR CARPETA ===
+def obtener_o_crear_carpeta(drive, nombre_proyecto):
+    query = f"'{CARPETA_PADRE_ID}' in parents and name = '{nombre_proyecto}' and mimeType = 'application/vnd.google-apps.folder'"
+    result = drive.files().list(q=query, fields="files(id)").execute()
+    items = result.get('files', [])
+    if items:
+        return items[0]['id']
+
+    # Si no existe, crear carpeta
+    carpeta_metadata = {
+        'name': nombre_proyecto,
+        'mimeType': 'application/vnd.google-apps.folder',
+        'parents': [CARPETA_PADRE_ID]
+    }
+    carpeta = drive.files().create(body=carpeta_metadata, fields='id').execute()
+    return carpeta.get('id')
+
 # === BUSCAR DATOS FIJOS EN SHEETS ===
 def obtener_datos_fijos(sheets, nombre_proyecto):
     result = sheets.spreadsheets().values().get(
@@ -48,13 +65,6 @@ def obtener_datos_fijos(sheets, nombre_proyecto):
             }
     return {}
 
-# === OBTENER ID DE CARPETA ===
-def obtener_carpeta_id(drive, nombre_proyecto):
-    query = f"'{CARPETA_PADRE_ID}' in parents and name = '{nombre_proyecto}' and mimeType = 'application/vnd.google-apps.folder'"
-    result = drive.files().list(q=query, fields="files(id)").execute()
-    items = result.get('files', [])
-    return items[0]['id'] if items else None
-
 # === SUBIR IMAGEN DIRECTAMENTE DESDE AGENTE ===
 @app.route('/subir-imagen', methods=['POST'])
 def subir_imagen_directa():
@@ -66,16 +76,17 @@ def subir_imagen_directa():
         return jsonify({"error": "Faltan datos: nombre_proyecto, nombre_archivo o archivo"}), 400
 
     drive, _ = autenticar()
-    carpeta_id = obtener_carpeta_id(drive, nombre_proyecto)
+    carpeta_id = obtener_o_crear_carpeta(drive, nombre_proyecto)
 
-    if not carpeta_id:
-        return jsonify({"error": "No se encontró la carpeta del proyecto"}), 404
-
+    # Eliminar archivos existentes con mismo nombre
     query = f"'{carpeta_id}' in parents and name = '{nombre_archivo}'"
     archivos = drive.files().list(q=query, fields="files(id)").execute().get('files', [])
     for archivo_existente in archivos:
         drive.files().delete(fileId=archivo_existente['id']).execute()
 
+    # Guardar archivo temporalmente y subir
+    if not os.path.exists('temp'):
+        os.makedirs('temp')
     temp_path = os.path.join("temp", secure_filename(nombre_archivo))
     archivo.save(temp_path)
 
@@ -111,10 +122,7 @@ def actualizar_presentacion():
         return jsonify({"error": "Faltan campos: 'nombre_proyecto' y/o 'datos_variables'"}), 400
 
     drive, sheets = autenticar()
-    carpeta_id = obtener_carpeta_id(drive, nombre_proyecto)
-
-    if not carpeta_id:
-        return jsonify({"error": "No se encontró la carpeta del proyecto"}), 404
+    carpeta_id = obtener_o_crear_carpeta(drive, nombre_proyecto)
 
     datos_fijos = obtener_datos_fijos(sheets, nombre_proyecto)
     if not datos_fijos:

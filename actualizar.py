@@ -14,7 +14,7 @@ WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzGf9eb4pchk9c9k-5i-DBMxN
 
 app = Flask(__name__)
 
-# === AUTENTICACIÓN ===
+# === AUTENTICACIÓN USANDO VARIABLE DE ENTORNO JSON ===
 def autenticar():
     creds_json_str = os.getenv('GOOGLE_CREDS_JSON')
     if not creds_json_str:
@@ -36,16 +36,16 @@ def obtener_o_crear_carpeta(drive, nombre_proyecto):
     items = result.get('files', [])
     if items:
         return items[0]['id']
-
-    metadata = {
+    
+    carpeta_metadata = {
         'name': nombre_proyecto,
         'mimeType': 'application/vnd.google-apps.folder',
         'parents': [CARPETA_PADRE_ID]
     }
-    carpeta = drive.files().create(body=metadata, fields='id').execute()
-    return carpeta['id']
+    carpeta = drive.files().create(body=carpeta_metadata, fields='id').execute()
+    return carpeta.get('id')
 
-# === OBTENER DATOS FIJOS DESDE SHEETS ===
+# === BUSCAR DATOS FIJOS EN SHEETS ===
 def obtener_datos_fijos(sheets, nombre_proyecto):
     result = sheets.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID,
@@ -55,17 +55,18 @@ def obtener_datos_fijos(sheets, nombre_proyecto):
     for row in result.get('values', []):
         if row[0] == nombre_proyecto:
             return {
-                "TITULO1": row[1] if len(row) > 1 else "",
-                "TITULO2": row[2] if len(row) > 2 else "",
-                "BUOWNER": row[3] if len(row) > 3 else "",
-                "PM": row[4] if len(row) > 4 else "",
-                "FECHAI": row[5] if len(row) > 5 else "",
-                "FECHAF": row[6] if len(row) > 6 else ""
+                "TITULO1": row[1],
+                "TITULO2": row[2],
+                "BUOWNER": row[3],
+                "PM": row[4],
+                "FECHAI": row[5],
+                "FECHAF": row[6],
+                "DESCRIPTION": row[7] if len(row) > 7 else ""
             }
     return {}
 
-# === AGREGAR PROYECTO Y ACTUALIZACIÓN NUEVA ===
-def agregar_proyecto_y_actualizacion(sheets, nombre_proyecto, datos_fijos, datos_variables, carpeta_id, presentacion_id):
+# === AGREGAR NUEVO PROYECTO Y ACTUALIZACIÓN ===
+def agregar_proyecto_y_actualizacion(sheets, nombre_proyecto, datos_fijos, datos_variables):
     fila_proyecto = [
         nombre_proyecto,
         datos_fijos.get("TITULO1", ""),
@@ -74,8 +75,7 @@ def agregar_proyecto_y_actualizacion(sheets, nombre_proyecto, datos_fijos, datos
         datos_fijos.get("PM", ""),
         datos_fijos.get("FECHAI", ""),
         datos_fijos.get("FECHAF", ""),
-        carpeta_id,
-        presentacion_id
+        datos_fijos.get("DESCRIPTION", "")
     ]
     sheets.spreadsheets().values().append(
         spreadsheetId=SPREADSHEET_ID,
@@ -87,6 +87,7 @@ def agregar_proyecto_y_actualizacion(sheets, nombre_proyecto, datos_fijos, datos
 
     fila_actualizacion = [
         nombre_proyecto,
+        datos_variables.get("FECHA1", ""),
         datos_variables.get("AVANCE1", ""),
         datos_variables.get("AVANCE2", ""),
         datos_variables.get("AVANCE3", ""),
@@ -101,7 +102,10 @@ def agregar_proyecto_y_actualizacion(sheets, nombre_proyecto, datos_fijos, datos
         datos_variables.get("RESP3", ""),
         datos_variables.get("ESTAD1", ""),
         datos_variables.get("ESTAD2", ""),
-        datos_variables.get("ESTAD3", "")
+        datos_variables.get("ESTAD3", ""),
+        datos_variables.get("PASO1", ""),
+        datos_variables.get("PASO2", ""),
+        datos_variables.get("PASO3", "")
     ]
     sheets.spreadsheets().values().append(
         spreadsheetId=SPREADSHEET_ID,
@@ -111,20 +115,7 @@ def agregar_proyecto_y_actualizacion(sheets, nombre_proyecto, datos_fijos, datos
         body={'values': [fila_actualizacion]}
     ).execute()
 
-# === LLAMAR AL WEB APP ===
-def llamar_web_app(nombre_proyecto, datos_finales):
-    payload = {
-        'nombreProyecto': nombre_proyecto,
-        'datos': datos_finales
-    }
-    headers = {'Content-Type': 'application/json'}
-    response = requests.post(WEB_APP_URL, data=json.dumps(payload), headers=headers)
-    if response.status_code == 200:
-        return response.json().get('url')
-    else:
-        raise Exception(f"Error {response.status_code}: {response.text}")
-
-# === SUBIR IMAGEN A DRIVE ===
+# === SUBIR IMAGEN DIRECTAMENTE DESDE AGENTE ===
 @app.route('/subir-imagen', methods=['POST'])
 def subir_imagen_directa():
     nombre_proyecto = request.form.get('nombre_proyecto')
@@ -132,7 +123,7 @@ def subir_imagen_directa():
     archivo = request.files.get('archivo')
 
     if not nombre_proyecto or not nombre_archivo or not archivo:
-        return jsonify({"error": "Faltan datos"}), 400
+        return jsonify({"error": "Faltan datos: nombre_proyecto, nombre_archivo o archivo"}), 400
 
     drive, _ = autenticar()
     carpeta_id = obtener_o_crear_carpeta(drive, nombre_proyecto)
@@ -155,42 +146,49 @@ def subir_imagen_directa():
 
     return jsonify({"mensaje": f"✅ Imagen '{nombre_archivo}' subida correctamente"}), 200
 
-# === ACTUALIZAR O CREAR PRESENTACIÓN ===
+# === LLAMAR A WEB APP ===
+def llamar_web_app(nombre_proyecto, datos_finales):
+    payload = {
+        'nombreProyecto': nombre_proyecto,
+        'datos': datos_finales
+    }
+    headers = {'Content-Type': 'application/json'}
+    try:
+        response = requests.post(WEB_APP_URL, data=json.dumps(payload), headers=headers, timeout=15)
+        response.raise_for_status()
+        return response.json().get('url')
+    except requests.exceptions.Timeout:
+        raise Exception("⏰ Timeout al llamar al WebApp (más de 15 segundos).")
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"❌ Error al llamar al WebApp: {e}")
+
+# === ENDPOINT PRINCIPAL ===
 @app.route('/actualizar-presentacion', methods=['POST'])
 def actualizar_presentacion():
     body = request.get_json()
     nombre_proyecto = body.get("nombre_proyecto")
-    datos_fijos = body.get("datos_fijos")
-    datos_variables = body.get("datos_variables")
+    datos_variables = body.get("datos_variables", {})
+    datos_fijos_entrantes = body.get("datos_fijos", {})
 
     if not nombre_proyecto or not datos_variables:
-        return jsonify({"error": "Faltan campos requeridos"}), 400
+        return jsonify({"error": "Faltan campos: 'nombre_proyecto' y/o 'datos_variables'"}), 400
 
     drive, sheets = autenticar()
     carpeta_id = obtener_o_crear_carpeta(drive, nombre_proyecto)
 
-    datos_fijos_existentes = obtener_datos_fijos(sheets, nombre_proyecto)
-    if datos_fijos_existentes:
-        datos_finales = {**datos_fijos_existentes, **datos_variables}
-        url = llamar_web_app(nombre_proyecto, datos_finales)
-        return jsonify({"mensaje": "✅ Presentación actualizada", "url": url})
-
+    datos_fijos = obtener_datos_fijos(sheets, nombre_proyecto)
     if not datos_fijos:
-        return jsonify({"error": "Faltan datos fijos para proyecto nuevo"}), 400
+        if not datos_fijos_entrantes:
+            return jsonify({"error": "El proyecto no existe y no se enviaron datos fijos para crearlo"}), 400
+        agregar_proyecto_y_actualizacion(sheets, nombre_proyecto, datos_fijos_entrantes, datos_variables)
+        datos_fijos = datos_fijos_entrantes
 
     datos_finales = {**datos_fijos, **datos_variables}
     url = llamar_web_app(nombre_proyecto, datos_finales)
 
-    try:
-        presentacion_id = url.split('/d/')[1].split('/')[0]
-    except:
-        presentacion_id = ""
+    return jsonify({"mensaje": "✅ Presentación creada o actualizada", "url": url})
 
-    agregar_proyecto_y_actualizacion(sheets, nombre_proyecto, datos_fijos, datos_variables, carpeta_id, presentacion_id)
-
-    return jsonify({"mensaje": "✅ Proyecto nuevo creado y presentación generada", "url": url})
-
-# === EJECUCIÓN LOCAL ===
+# === RUN SERVER ===
 if __name__ == '__main__':
     if not os.path.exists('temp'):
         os.makedirs('temp')

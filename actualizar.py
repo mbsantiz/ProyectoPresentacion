@@ -45,7 +45,7 @@ def obtener_o_crear_carpeta(drive, nombre_proyecto):
     carpeta = drive.files().create(body=carpeta_metadata, fields='id').execute()
     return carpeta.get('id')
 
-# === BUSCAR DATOS FIJOS EN SHEETS ===
+# === OBTENER DATOS FIJOS EN SHEETS (solo primeras 8 columnas) ===
 def obtener_datos_fijos(sheets, nombre_proyecto):
     result = sheets.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID,
@@ -53,7 +53,7 @@ def obtener_datos_fijos(sheets, nombre_proyecto):
     ).execute()
 
     for row in result.get('values', []):
-        if row[0] == nombre_proyecto:
+        if row and row[0] == nombre_proyecto:
             if len(row) < 8:
                 raise Exception(f"Fila incompleta para el proyecto '{nombre_proyecto}'. Se requieren al menos 8 columnas.")
             return {
@@ -68,28 +68,53 @@ def obtener_datos_fijos(sheets, nombre_proyecto):
 
     return {}
 
-# === AGREGAR NUEVO PROYECTO Y ACTUALIZACIÓN ===
-def agregar_proyecto_y_actualizacion(sheets, nombre_proyecto, datos_fijos, datos_variables):
-    fila_proyecto = [
-    nombre_proyecto,
-    datos_variables.get("TITULO1", ""),
-    datos_variables.get("TITULO2", ""),
-    datos_variables.get("BUOWNER", ""),
-    datos_variables.get("PM", ""),
-    datos_variables.get("FECHAI", ""),
-    datos_variables.get("FECHAF", ""),
-    datos_variables.get("DESCRIPTION", ""),
-    "",  # CarpetaID (vacío por ahora)
-    ""   # PresentacionBaseID (vacío por ahora)
-]
-    sheets.spreadsheets().values().append(
+# === BUSCAR FILA DE PROYECTO EXISTENTE ===
+def buscar_fila_proyecto(sheets, nombre_proyecto):
+    result = sheets.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID,
-        range='Proyectos',
-        valueInputOption='RAW',
-        insertDataOption='INSERT_ROWS',
-        body={'values': [fila_proyecto]}
+        range='Proyectos'
     ).execute()
+    values = result.get('values', [])
+    for i, row in enumerate(values):
+        if row and row[0] == nombre_proyecto:
+            return i + 1  # Las filas en Sheets son 1-indexadas
+    return -1
 
+# === AGREGAR O ACTUALIZAR PROYECTO SIN CarpetaID NI PresentacionBaseID ===
+def agregar_o_actualizar_proyecto(sheets, nombre_proyecto, datos_variables):
+    fila_proyecto = [
+        nombre_proyecto,
+        datos_variables.get("TITULO1", ""),
+        datos_variables.get("TITULO2", ""),
+        datos_variables.get("BUOWNER", ""),
+        datos_variables.get("PM", ""),
+        datos_variables.get("FECHAI", ""),
+        datos_variables.get("FECHAF", ""),
+        datos_variables.get("DESCRIPTION", "")
+    ]
+    fila = buscar_fila_proyecto(sheets, nombre_proyecto)
+    if fila == -1:
+        # Agregar nueva fila (solo 8 columnas)
+        sheets.spreadsheets().values().append(
+            spreadsheetId=SPREADSHEET_ID,
+            range='Proyectos',
+            valueInputOption='RAW',
+            insertDataOption='INSERT_ROWS',
+            body={'values': [fila_proyecto]}
+        ).execute()
+    else:
+        # Actualizar fila existente y limpiar columnas 9 y 10 con vacíos
+        fila_proyecto.extend(["", ""])  # Para limpiar columnas I y J
+        range_to_update = f'Proyectos!A{fila}:J{fila}'
+        sheets.spreadsheets().values().update(
+            spreadsheetId=SPREADSHEET_ID,
+            range=range_to_update,
+            valueInputOption='RAW',
+            body={'values': [fila_proyecto]}
+        ).execute()
+
+# === AGREGAR REGISTRO DE ACTUALIZACIÓN EN HOJA "Actualizaciones" ===
+def agregar_actualizacion(sheets, nombre_proyecto, datos_variables):
     fila_actualizacion = [
         nombre_proyecto,
         datos_variables.get("FECHA1", ""),
@@ -179,17 +204,27 @@ def actualizar_presentacion():
         return jsonify({"error": "Faltan campos: 'nombre_proyecto' y/o 'datos_variables'"}), 400
 
     drive, sheets = autenticar()
-    carpeta_id = obtener_o_crear_carpeta(drive, nombre_proyecto)
 
+    # Intentar obtener datos fijos guardados (solo primeras 8 columnas)
     datos_fijos = obtener_datos_fijos(sheets, nombre_proyecto)
+
     if not datos_fijos:
         if not datos_fijos_entrantes:
             return jsonify({"error": "El proyecto no existe y no se enviaron datos fijos para crearlo"}), 400
-        agregar_proyecto_y_actualizacion(sheets, nombre_proyecto, datos_fijos_entrantes, datos_variables)
+        agregar_o_actualizar_proyecto(sheets, nombre_proyecto, datos_fijos_entrantes)
         datos_fijos = datos_fijos_entrantes
+    else:
+        # Actualizar datos fijos sin CarpetaID ni PresentacionBaseID si se envían nuevos datos fijos
+        if datos_fijos_entrantes:
+            agregar_o_actualizar_proyecto(sheets, nombre_proyecto, datos_fijos_entrantes)
+            datos_fijos = datos_fijos_entrantes
 
     datos_finales = {**datos_fijos, **datos_variables}
+
     url = llamar_web_app(nombre_proyecto, datos_finales)
+
+    # Guardar registro de actualización en hoja "Actualizaciones"
+    agregar_actualizacion(sheets, nombre_proyecto, datos_variables)
 
     return jsonify({"mensaje": "✅ Presentación creada o actualizada", "url": url})
 
